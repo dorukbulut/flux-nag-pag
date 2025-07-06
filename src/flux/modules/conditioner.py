@@ -1,20 +1,21 @@
 from torch import Tensor, nn
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
+from transformers import AutoModel, AutoTokenizer
 
 
 class HFEmbedder(nn.Module):
-    def __init__(self, version: str, max_length: int, **hf_kwargs):
+    def __init__(self, tokenizer_path: str, text_model_path: str,  max_length: int, is_clip: bool, **hf_kwargs):
         super().__init__()
-        self.is_clip = version.startswith("openai")
+        self.is_clip = is_clip
         self.max_length = max_length
         self.output_key = "pooler_output" if self.is_clip else "last_hidden_state"
 
         if self.is_clip:
-            self.tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(version, max_length=max_length)
-            self.hf_module: CLIPTextModel = CLIPTextModel.from_pretrained(version, **hf_kwargs)
+            self.tokenizer: CLIPTokenizer = AutoTokenizer.from_pretrained(tokenizer_path, max_length=max_length,  local_files_only=True)
+            self.hf_module: CLIPTextModel = AutoModel.from_pretrained(text_model_path,  local_files_only=True, **hf_kwargs)
         else:
-            self.tokenizer: T5Tokenizer = T5Tokenizer.from_pretrained(version, max_length=max_length)
-            self.hf_module: T5EncoderModel = T5EncoderModel.from_pretrained(version, **hf_kwargs)
+            self.tokenizer: T5Tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, max_length=max_length,  local_files_only=True)
+            self.hf_module: T5EncoderModel = AutoModel.from_pretrained(text_model_path, local_files_only=True, **hf_kwargs)
 
         self.hf_module = self.hf_module.eval().requires_grad_(False)
 
