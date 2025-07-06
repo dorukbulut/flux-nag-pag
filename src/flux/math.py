@@ -7,7 +7,7 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: floa
     """
         Hybrid PAG+NAG attention: NAG-style feature processing with PAG's identity matrix for negative guidance.
     """
-    print('new self attention !')
+    
     q, k = apply_rope(q, k, pe)
 
     x_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
