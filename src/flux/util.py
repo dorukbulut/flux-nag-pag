@@ -61,48 +61,16 @@ def prompt_for_hf_auth():
         return False
 
 
-def get_checkpoint_path(repo_id: str, filename: str, env_var: str) -> Path:
+def get_checkpoint_path(env_var: str) -> Path | None:
     """Get the local path for a checkpoint file, downloading if necessary."""
     if os.environ.get(env_var) is not None:
         local_path = os.environ[env_var]
         if os.path.exists(local_path):
             return Path(local_path)
 
-        print(
-            f"Trying to load model {repo_id}, {filename} from environment "
-            f"variable {env_var}. But file {local_path} does not exist. "
-            "Falling back to default location."
+        raise FileNotFoundError(
+            f"Checkpoint file specified by {env_var} does not exist: {local_path}"
         )
-
-    # Create a safe directory name from repo_id
-    safe_repo_name = repo_id.replace("/", "_")
-    checkpoint_dir = CHECKPOINTS_DIR / safe_repo_name
-    checkpoint_dir.mkdir(exist_ok=True)
-
-    local_path = checkpoint_dir / filename
-
-    if not local_path.exists():
-        print(f"Downloading {filename} from {repo_id} to {local_path}")
-        try:
-            ensure_hf_auth()
-            hf_hub_download(repo_id=repo_id, filename=filename, local_dir=checkpoint_dir)
-        except Exception as e:
-            if "gated repo" in str(e).lower() or "restricted" in str(e).lower():
-                print(f"\nError: Cannot access {repo_id} -- this is a gated repository.")
-
-                # Try one more time to authenticate
-                if prompt_for_hf_auth():
-                    # Retry the download after authentication
-                    print("Retrying download...")
-                    hf_hub_download(repo_id=repo_id, filename=filename, local_dir=checkpoint_dir)
-                else:
-                    print("Authentication failed or cancelled.")
-                    print("You can also run 'huggingface-cli login' or set HF_TOKEN environment variable")
-                    raise RuntimeError(f"Authentication required for {repo_id}")
-            else:
-                raise e
-
-    return local_path
 
 
 def download_onnx_models_for_trt(model_name: str, trt_transformer_precision: str = "bf16") -> str | None:
@@ -627,7 +595,7 @@ def load_flow_model(name: str, device: str | torch.device = "cuda", verbose: boo
     print("Init model")
     config = configs[name]
 
-    ckpt_path = str(get_checkpoint_path(config.repo_id, config.repo_flow, "FLUX_MODEL"))
+    ckpt_path = str(get_checkpoint_path("FLUX_MODEL"))
 
     with torch.device("meta"):
         if config.lora_repo_id is not None and config.lora_filename is not None:
@@ -645,7 +613,7 @@ def load_flow_model(name: str, device: str | torch.device = "cuda", verbose: boo
 
     if config.lora_repo_id is not None and config.lora_filename is not None:
         print("Loading LoRA")
-        lora_path = str(get_checkpoint_path(config.lora_repo_id, config.lora_filename, "FLUX_LORA"))
+        lora_path = str(get_checkpoint_path("FLUX_LORA"))
         lora_sd = load_sft(lora_path, device=str(device))
         # loading the lora params + overwriting scale values in the norms
         missing, unexpected = model.load_state_dict(lora_sd, strict=False, assign=True)
@@ -657,20 +625,20 @@ def load_flow_model(name: str, device: str | torch.device = "cuda", verbose: boo
 
 def load_t5(device: str | torch.device = "cuda", max_length: int = 512) -> HFEmbedder:
     # max length 64, 128, 256 and 512 should work (if your sequence is short enough)
-    tokenizer_path = str(get_checkpoint_path("", "", "FLUX_T5_TOKENIZER"))
-    text_model_path = str(get_checkpoint_path("", "", "FLUX_T5_MODEL"))
+    tokenizer_path = str(get_checkpoint_path("FLUX_T5_TOKENIZER"))
+    text_model_path = str(get_checkpoint_path("FLUX_T5_MODEL"))
     return HFEmbedder(tokenizer_path, text_model_path , max_length=max_length, is_clip=False, torch_dtype=torch.bfloat16).to(device)
 
 
 def load_clip(device: str | torch.device = "cuda") -> HFEmbedder:
-    tokenizer_path = str(get_checkpoint_path("", "", "FLUX_CLIP_TOKENIZER"))
-    text_model_path = str(get_checkpoint_path("", "", "FLUX_CLIP_MODEL"))
+    tokenizer_path = str(get_checkpoint_path("FLUX_CLIP_TOKENIZER"))
+    text_model_path = str(get_checkpoint_path("FLUX_CLIP_MODEL"))
     return HFEmbedder(tokenizer_path,text_model_path, max_length=77, is_clip=True, torch_dtype=torch.bfloat16).to(device)
 
 
 def load_ae(name: str, device: str | torch.device = "cuda") -> AutoEncoder:
     config = configs[name]
-    ckpt_path = str(get_checkpoint_path(config.repo_id, config.repo_ae, "FLUX_AE"))
+    ckpt_path = str(get_checkpoint_path("FLUX_AE"))
 
     # Loading the autoencoder
     print("Init AE")
