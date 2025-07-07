@@ -111,11 +111,11 @@ class Flux(nn.Module):
         pe = self.pe_embedder(ids)
 
         for block in self.double_blocks:
-            img, txt = block(img=img, txt=txt, vec=vec, pe=pe, guidance_weight=guidance if guidance is not None else 2.5, pag_weight=pag_weight, tau=tau, alpha=alpha)
+            img, txt = block(img=img, txt=txt, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau, alpha=alpha)
 
         img = torch.cat((txt, img), 1)
         for block in self.single_blocks:
-            img = block(img, vec=vec, pe=pe, guidance_weight=guidance if guidance is not None else 2.5, pag_weight=pag_weight, tau=tau, alpha=alpha)
+            img = block(img, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau, alpha=alpha)
         img = img[:, txt.shape[1] :, ...]
 
         img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
