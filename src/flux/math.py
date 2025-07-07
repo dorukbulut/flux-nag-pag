@@ -8,7 +8,7 @@ from einops import rearrange
 def attention(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     pe: torch.Tensor, guidance_weight: float,
-    tau: float = 1.2, alpha: float = 0.3
+    tau: float = 2.0, alpha: float = 0.5
 ) -> torch.Tensor:
     """
     Hybrid PAG + NAG Attention:
