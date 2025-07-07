@@ -30,8 +30,8 @@ def attention(
         identity_weights = identity_weights.expand(B, H, -1, -1)
         z_neg = torch.matmul(identity_weights, v)
         
-        
-        z_ex = z_pos + pag_weight * (z_pos - z_neg)
+        scale_guidance = pag_weight - 1.0
+        z_ex = z_pos + scale_guidance * (z_pos - z_neg)
         
         
         norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
