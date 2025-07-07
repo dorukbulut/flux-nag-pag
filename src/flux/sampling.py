@@ -318,7 +318,6 @@ def denoise(
     guidance: float = 4.0,
     pag_weight: float = 0.5,
     tau: float = 0.5,
-    alpha: float = 1.2,
     # extra img tokens (channel-wise)
     img_cond: Tensor | None = None,
     # extra img tokens (sequence-wise)
@@ -348,8 +347,7 @@ def denoise(
             timesteps=t_vec,
             guidance=guidance_vec,
             pag_weight=pag_weight,
-            tau=tau,
-            alpha=alpha
+            tau=tau
         )
         if img_input_ids is not None:
             pred = pred[:, : img.shape[1]]

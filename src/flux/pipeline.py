@@ -50,10 +50,9 @@ class FluxInference:
         guidance: float = 3.5,
         pag_weight: float = 0.5,
         tau: float = 1.2,
-        alpha: float = 0.3,
         seed: Optional[int] = None
     ) -> Image.Image:
-        return self.generate(prompt, None, width, height, num_steps, guidance, seed, pag_weight, tau, alpha)
+        return self.generate(prompt, None, width, height, num_steps, guidance, seed, pag_weight, tau)
     
     def image_to_image(
         self,
@@ -66,16 +65,15 @@ class FluxInference:
         guidance: float = 3.5,
         pag_weight: float = 0.5,
         tau: float = 1.2,
-        alpha: float = 0.3,
         seed: Optional[int] = None
     ) -> Image.Image:
         if self.is_schnell:
             raise ValueError("Image-to-image not supported for flux-schnell")
         
-        return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed, pag_weight, tau, alpha)
+        return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed, pag_weight, tau)
     
     @torch.inference_mode()
-    def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed ,pag_weight, tau, alpha ):
+    def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed ,pag_weight, tau):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
@@ -125,7 +123,6 @@ class FluxInference:
             guidance=guidance,
             pag_weight=pag_weight,
             tau=tau,
-            alpha=alpha,
             seed=seed,
     )
         
@@ -160,7 +157,7 @@ class FluxInference:
             torch.cuda.empty_cache()
             self.model = self.model.to(self.device)
         
-        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance, pag_weight=opts.pag_weight, tau=opts.tau, alpha=opts.alpha)
+        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance, pag_weight=opts.pag_weight, tau=opts.tau)
         
         if self.offload:
             self.model.cpu()

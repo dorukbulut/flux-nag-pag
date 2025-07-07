@@ -31,7 +31,6 @@ class SamplingOptions:
     guidance: float
     pag_weight: float 
     tau: float
-    alpha: float
     seed: int | None
 
 

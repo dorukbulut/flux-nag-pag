@@ -91,8 +91,7 @@ class Flux(nn.Module):
         y: Tensor,
         guidance: Tensor | None = None,
         pag_weight: float = 0.5,
-        tau: float = 1.5,
-        alpha: float = 0.5,
+        tau: float = 1.5
     ) -> Tensor:
         if img.ndim != 3 or txt.ndim != 3:
             raise ValueError("Input img and txt tensors must have 3 dimensions.")
@@ -111,11 +110,11 @@ class Flux(nn.Module):
         pe = self.pe_embedder(ids)
 
         for block in self.double_blocks:
-            img, txt = block(img=img, txt=txt, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau, alpha=alpha)
+            img, txt = block(img=img, txt=txt, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau)
 
         img = torch.cat((txt, img), 1)
         for block in self.single_blocks:
-            img = block(img, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau, alpha=alpha)
+            img = block(img, vec=vec, pe=pe, pag_weight=pag_weight, tau=tau)
         img = img[:, txt.shape[1] :, ...]
 
         img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)

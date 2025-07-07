@@ -2,59 +2,45 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
-import torch
-from einops import rearrange
-
 def attention(
-    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
-    pe: torch.Tensor, pag_weight: float,
-    tau: float = 1.2, alpha: float = 0.3
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    pe: torch.Tensor,
+    pag_weight: float = 0.0,  
+    tau: float = 1.5
 ) -> torch.Tensor:
     """
     Hybrid PAG + NAG Attention:
-    - PAG: Perturb attention weights with identity for structural guidance.
-    - NAG: Normalize and refine extrapolated features.
+    - Like NAG: Extrapolate between positive and negative features.
+    - Like PAG: Use identity attention for negative (instead of a prompt).
+    - Normalize the extrapolated feature if its norm grows too large.
     """
     B, H, L, D = q.shape
-    
-    
-    q, k = apply_rope(q, k, pe)
-    
-    
-    z_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-    
-    
-    if pag_weight > 1.0:
-        
-        identity_weights = torch.eye(L, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
-        identity_weights = identity_weights.expand(B, H, -1, -1)
-        z_neg = torch.matmul(identity_weights, v)
-        
-        scale_guidance = pag_weight - 1.0
-        z_ex = z_pos + scale_guidance * (z_pos - z_neg)
-        
-        
-        norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
-        norm_ex = torch.norm(z_ex, dim=-1, keepdim=True)
-        
-        
-        ratio = norm_ex / (norm_pos + 1e-8)
-        scale_factor = torch.where(
-            ratio > tau,
-            tau / ratio,
-            torch.ones_like(ratio)
-        )
-        z_norm = z_ex * scale_factor
-        
 
-        z_final = alpha * z_norm + (1 - alpha) * z_pos
-    else:
-
-        z_final = z_pos
     
+    q, k = apply_rope(q, k, pe) 
 
-    out = rearrange(z_final, "b h l d -> b l (h d)")
-    return out
+    
+    z_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)  # [B, H, L, D]
+
+    
+    identity_attn = torch.eye(L, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
+    identity_attn = identity_attn.expand(B, H, L, L)
+    z_neg = torch.matmul(identity_attn, v)
+
+    
+    z_ex = z_pos + pag_weight * (z_pos - z_neg)
+
+    
+    norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
+    norm_ex = torch.norm(z_ex, dim=-1, keepdim=True)
+
+    ratio = norm_ex / (norm_pos + 1e-6)
+    scale = torch.where(ratio > tau, tau / ratio, torch.ones_like(ratio))
+    z_scaled = z_ex * scale
+
+    return rearrange(z_scaled, "b h l d -> b l (h d)")
 
 def rope(pos: Tensor, dim: int, theta: int) -> Tensor:
     assert dim % 2 == 0
