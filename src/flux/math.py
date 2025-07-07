@@ -4,12 +4,31 @@ from torch import Tensor
 
 
 def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: float) -> Tensor:
+    """
+    Hybrid PAG+NAG attention: 
+    - NAG-style: compute features, combine with weight, normalize
+    - PAG-style: use identity matrix for negative attention (not negative prompt)
+    """
+    
     q, k = apply_rope(q, k, pe)
-
-    x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-    x = rearrange(x, "B H L D -> B L (H D)")
-
-    return x
+    pos_features = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    
+    
+    B, H, L, D = q.shape
+    identity = torch.eye(L, device=q.device, dtype=q.dtype)
+    identity = identity.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
+    neg_features = torch.einsum('bhij,bhjd->bhid', identity, v)
+    
+    
+    combined_features = neg_features + guidance_weight * (pos_features - neg_features)
+    
+    
+    normalized_features = torch.nn.functional.normalize(combined_features, dim=-1)
+    
+    # Reshape to output format
+    output = rearrange(normalized_features, "B H L D -> B L (H D)")
+    
+    return output
 
 def rope(pos: Tensor, dim: int, theta: int) -> Tensor:
     assert dim % 2 == 0
