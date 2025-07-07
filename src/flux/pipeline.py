@@ -29,15 +29,12 @@ class FluxInference:
         self.offload = offload
         self.is_schnell = model_name == "flux-schnell"
         
-        
-       
         self.t5 = load_t5(self.device, max_length=256 if self.is_schnell else 512)
         self.clip = load_clip(self.device)
         self.model = load_flow_model(model_name, device="cpu" if offload else self.device)
         self.ae = load_ae(model_name, device="cpu" if offload else self.device)
         
         self.rng = torch.Generator(device="cpu")
-        
         
         self.transform = transforms.Compose([
             transforms.ToTensor(),
@@ -53,7 +50,6 @@ class FluxInference:
         guidance: float = 3.5,
         seed: Optional[int] = None
     ) -> Image.Image:
-        """Generate image from text"""
         return self.generate(prompt, None, width, height, num_steps, guidance, seed)
     
     def image_to_image(
@@ -67,19 +63,20 @@ class FluxInference:
         guidance: float = 3.5,
         seed: Optional[int] = None
     ) -> Image.Image:
-        """Generate image from text and initial image"""
         if self.is_schnell:
             raise ValueError("Image-to-image not supported for flux-schnell")
         
         return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed)
     
+    @torch.inference_mode()
     def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        init_latent = None
+        init_image_latent = None
+        
         if img2img_data:
-            init_image, strength = img2img_data
+            init_image, image2image_strength = img2img_data
             if init_image.mode != "RGB":
                 init_image = init_image.convert("RGB")
             
@@ -92,27 +89,22 @@ class FluxInference:
             
             width = int(16 * (width // 16))
             height = int(16 * (height // 16))
+            
             init_tensor = torch.nn.functional.interpolate(init_tensor, (height, width))
             
+            if self.offload:
+                self.ae.encoder.to(self.device)
+            
+            init_image_latent = self.ae.encode(init_tensor.to(self.device))
             
             if self.offload:
-                self.ae.encoder = self.ae.encoder.to(self.device)
-            
-            with torch.no_grad():
-                init_latent = self.ae.encode(init_tensor.to(self.device))
-            
-            if self.offload:
-                self.ae.encoder = self.ae.encoder.cpu()
+                self.ae = self.ae.cpu()
                 torch.cuda.empty_cache()
             
-            
             del init_tensor
-            del init_image
-            torch.cuda.empty_cache()
         else:
             width = int(16 * (width // 16))
             height = int(16 * (height // 16))
-        
         
         if num_steps is None:
             num_steps = 4 if self.is_schnell else 50
@@ -128,76 +120,55 @@ class FluxInference:
             seed=seed,
         )
         
-       
-        with torch.no_grad():
-            x = get_noise(1, opts.height, opts.width, device=self.device, dtype=torch.bfloat16, seed=opts.seed)
+        x = get_noise(
+            1,
+            opts.height,
+            opts.width,
+            device=self.device,
+            dtype=torch.bfloat16,
+            seed=opts.seed,
+        )
         
+        timesteps = get_schedule(
+            opts.num_steps,
+            (x.shape[-1] * x.shape[-2]) // 4,
+            shift=(not self.is_schnell),
+        )
         
-        timesteps = get_schedule(opts.num_steps, (x.shape[-1] * x.shape[-2]) // 4, shift=(not self.is_schnell))
-        
-    
-        if init_latent is not None:
-            strength = img2img_data[1]
-            t_idx = int((1 - strength) * num_steps)
+        if init_image_latent is not None:
+            t_idx = int((1 - image2image_strength) * num_steps)
             t = timesteps[t_idx]
             timesteps = timesteps[t_idx:]
-            
-            with torch.no_grad():
-                x = t * x + (1.0 - t) * init_latent.to(x.dtype)
-            
-            # Clear init_latent
-            del init_latent
-            torch.cuda.empty_cache()
-        
-       
-        if self.offload:
-            self.t5 = self.t5.to(self.device)
-            self.clip = self.clip.to(self.device)
-        
-        with torch.no_grad():
-            inp = prepare(t5=self.t5, clip=self.clip, img=x, prompt=opts.prompt)
+            x = t * x + (1.0 - t) * init_image_latent.to(x.dtype)
         
         if self.offload:
-            self.t5 = self.t5.cpu()
-            self.clip = self.clip.cpu()
+            self.t5, self.clip = self.t5.to(self.device), self.clip.to(self.device)
+        
+        inp = prepare(t5=self.t5, clip=self.clip, img=x, prompt=opts.prompt)
+        
+        if self.offload:
+            self.t5, self.clip = self.t5.cpu(), self.clip.cpu()
             torch.cuda.empty_cache()
             self.model = self.model.to(self.device)
         
-    
-        with torch.no_grad():
-            x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance)
-        
-        
-        del inp
-        torch.cuda.empty_cache()
+        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance)
         
         if self.offload:
-            self.model = self.model.cpu()
+            self.model.cpu()
             torch.cuda.empty_cache()
-            self.ae.decoder = self.ae.decoder.to(x.device)
+            self.ae.decoder.to(x.device)
         
-        with torch.no_grad():
-            x = unpack(x.float(), opts.height, opts.width)
-            
-            
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                x = self.ae.decode(x)
+        x = unpack(x.float(), opts.height, opts.width)
+        with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+            x = self.ae.decode(x)
         
         if self.offload:
-            self.ae.decoder = self.ae.decoder.cpu()
+            self.ae.decoder.cpu()
             torch.cuda.empty_cache()
         
+        x = x.clamp(-1, 1)
+        x = rearrange(x[0], "c h w -> h w c")
         
-        with torch.no_grad():
-            x = x.clamp(-1, 1)
-            x = rearrange(x[0], "c h w -> h w c")
-            
-            
-            x_cpu = x.cpu()
-            del x 
-            torch.cuda.empty_cache()
-            
-            img_array = (127.5 * (x_cpu + 1.0)).byte().numpy()
-            del x_cpu
-            
-            return Image.fromarray(img_array)
+        img = Image.fromarray((127.5 * (x + 1.0)).cpu().byte().numpy())
+        
+        return img
