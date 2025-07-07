@@ -48,9 +48,12 @@ class FluxInference:
         height: int = 768,
         num_steps: Optional[int] = None,
         guidance: float = 3.5,
+        pag_weight: float = 0.5,
+        tau: float = 1.2,
+        alpha: float = 0.3,
         seed: Optional[int] = None
     ) -> Image.Image:
-        return self.generate(prompt, None, width, height, num_steps, guidance, seed)
+        return self.generate(prompt, None, width, height, num_steps, guidance, seed, pag_weight, tau, alpha)
     
     def image_to_image(
         self,
@@ -61,15 +64,18 @@ class FluxInference:
         height: Optional[int] = None,
         num_steps: int = 50,
         guidance: float = 3.5,
+        pag_weight: float = 0.5,
+        tau: float = 1.2,
+        alpha: float = 0.3,
         seed: Optional[int] = None
     ) -> Image.Image:
         if self.is_schnell:
             raise ValueError("Image-to-image not supported for flux-schnell")
         
-        return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed)
+        return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed, pag_weight, tau, alpha)
     
     @torch.inference_mode()
-    def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed):
+    def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed ,pag_weight, tau, alpha ):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
@@ -116,9 +122,12 @@ class FluxInference:
             width=width,
             height=height,
             num_steps=num_steps,
-            guidance=guidance if not self.is_schnell else 3.5,
+            guidance=guidance,
+            pag_weight=pag_weight,
+            tau=tau,
+            alpha=alpha,
             seed=seed,
-        )
+    )
         
         x = get_noise(
             1,
@@ -151,7 +160,7 @@ class FluxInference:
             torch.cuda.empty_cache()
             self.model = self.model.to(self.device)
         
-        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance)
+        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance, pag_weight=opts.pag_weight, tau=opts.tau, alpha=opts.alpha)
         
         if self.offload:
             self.model.cpu()
