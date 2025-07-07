@@ -12,16 +12,13 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: floa
     
     q, k = apply_rope(q, k, pe)
     pos_features = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-    
+
     
     B, H, L, D = q.shape
-    
+
     combined_features = pos_features + guidance_weight * (pos_features - v)
     
-    
-    normalized_features = torch.nn.functional.normalize(combined_features, dim=-1)
-    
-    output = rearrange(normalized_features, "B H L D -> B L (H D)")
+    output = rearrange(combined_features, "B H L D -> B L (H D)")
     
     return output
 
