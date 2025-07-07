@@ -2,48 +2,66 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
+import torch
+from einops import rearrange
+
 def attention(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     pe: torch.Tensor, guidance_weight: float,
-    tau: float = 2.0, alpha: float = 0.5
+    tau: float = 1.2, alpha: float = 0.3
 ) -> torch.Tensor:
     """
     Hybrid PAG + NAG Attention:
-    - PAG: Perturb attention with identity for structural guidance.
+    - PAG: Perturb attention weights with identity for structural guidance.
     - NAG: Normalize and refine extrapolated features.
 
     Args:
-      guidance_weight: extrapolation scale φ
-      tau: max L1-magnitude ratio for normalization
-      alpha: blend factor between normalized and original positive features
+      guidance_weight: extrapolation scale φ (typically 2.5-7.5)
+      tau: max norm ratio for normalization (reduced from 2.0)
+      alpha: blend factor between normalized and original positive features (reduced)
     """
-
-    # 1. Apply rotary embeddings
-    q, k = apply_rope(q, k, pe)
-
-    # 2. Positive attention output
-    z_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-
-    # 3. PAG-style negative: identity-attended features
-    z_neg = v.clone()
-
-    # 4. Extrapolate along feature difference (NAG)
-    z_ex = z_pos + guidance_weight * (z_pos - z_neg)
-
-    # 5. L1‑based normalization
-    # Compute L1 norms per token across feature dim
-    norm_pos = z_pos.abs().sum(dim=-1, keepdim=True)  # [B,H,L,1]
-    norm_ex = z_ex.abs().sum(dim=-1, keepdim=True)
-    ratio = norm_ex / (norm_pos + 1e-6)
-    scale = torch.clamp(ratio, max=tau) / (ratio + 1e-6)
-    z_norm = z_ex * scale
-
-    # 6. Feature refinement (blend with original positive features)
-    z_ref = alpha * z_norm + (1 - alpha) * z_pos
-
-    # 7. Merge heads
     B, H, L, D = q.shape
-    out = rearrange(z_ref, "b h l d -> b l (h d)")
+    
+    # 1. Apply rotary position embeddings
+    q, k = apply_rope(q, k, pe)
+    
+    # 2. Compute positive attention (normal attention)
+    z_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    
+    # 3. Only apply guidance if guidance_weight > 1.0 (indicating guidance is active)
+    if guidance_weight > 1.0:
+        # PAG-style negative: identity attention (attend to same position)
+        # Create identity attention weights and apply to values
+        identity_weights = torch.eye(L, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
+        identity_weights = identity_weights.expand(B, H, -1, -1)
+        z_neg = torch.matmul(identity_weights, v)
+        
+        # 4. NAG-style extrapolation
+        guidance_scale = guidance_weight - 1.0  # Convert to scale factor
+        z_ex = z_pos + guidance_scale * (z_pos - z_neg)
+        
+        # 5. Gentle L2-based normalization (more stable than L1)
+        norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
+        norm_ex = torch.norm(z_ex, dim=-1, keepdim=True)
+        
+        # Only normalize if the expansion is significant
+        ratio = norm_ex / (norm_pos + 1e-8)
+        scale_factor = torch.where(
+            ratio > tau,
+            tau / ratio,
+            torch.ones_like(ratio)
+        )
+        z_norm = z_ex * scale_factor
+        
+        # 6. Conservative feature refinement
+        # Blend more conservatively to maintain stability
+        z_final = alpha * z_norm + (1 - alpha) * z_pos
+    else:
+        # No guidance, use standard attention
+        z_final = z_pos
+    
+    # 7. Merge heads
+    out = rearrange(z_final, "b h l d -> b l (h d)")
     return out
 
 def rope(pos: Tensor, dim: int, theta: int) -> Tensor:
