@@ -25,7 +25,6 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: floa
     
     normalized_features = torch.nn.functional.normalize(combined_features, dim=-1)
     
-    # Reshape to output format
     output = rearrange(normalized_features, "B H L D -> B L (H D)")
     
     return output
