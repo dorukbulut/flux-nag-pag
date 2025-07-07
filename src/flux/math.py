@@ -15,12 +15,12 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: floa
     
     
     B, H, L, D = q.shape
-    identity = torch.eye(L, device=q.device, dtype=q.dtype)
-    identity = identity.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
-    neg_features = torch.einsum('bhij,bhjd->bhid', identity, v)
+    identity_attn = torch.eye(L, device=q.device, dtype=q.dtype)
+    identity_attn = identity_attn.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
+    neg_features = torch.matmul(identity_attn, v)
     
     
-    combined_features = neg_features + guidance_weight * (pos_features - neg_features)
+    combined_features = pos_features + guidance_weight * (pos_features - neg_features)
     
     
     normalized_features = torch.nn.functional.normalize(combined_features, dim=-1)
