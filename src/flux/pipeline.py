@@ -74,8 +74,8 @@ class FluxInference:
         return self.generate(prompt, (init_image, strength), width, height, num_steps, guidance, seed)
     
     def generate(self, prompt, img2img_data, width, height, num_steps, guidance, seed):
-        """Shared generation logic"""
-        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         init_latent = None
         if img2img_data:
@@ -96,10 +96,19 @@ class FluxInference:
             
             
             if self.offload:
-                self.ae.encoder.to(self.device)
-            init_latent = self.ae.encode(init_tensor.to(self.device))
+                self.ae.encoder = self.ae.encoder.to(self.device)
+            
+            with torch.no_grad():
+                init_latent = self.ae.encode(init_tensor.to(self.device))
+            
             if self.offload:
-                self.ae.encoder.cpu()
+                self.ae.encoder = self.ae.encoder.cpu()
+                torch.cuda.empty_cache()
+            
+            
+            del init_tensor
+            del init_image
+            torch.cuda.empty_cache()
         else:
             width = int(16 * (width // 16))
             height = int(16 * (height // 16))
@@ -119,47 +128,76 @@ class FluxInference:
             seed=seed,
         )
         
-        
-        x = get_noise(1, opts.height, opts.width, device=self.device, dtype=torch.bfloat16, seed=opts.seed)
+       
+        with torch.no_grad():
+            x = get_noise(1, opts.height, opts.width, device=self.device, dtype=torch.bfloat16, seed=opts.seed)
         
         
         timesteps = get_schedule(opts.num_steps, (x.shape[-1] * x.shape[-2]) // 4, shift=(not self.is_schnell))
         
-        
+    
         if init_latent is not None:
             strength = img2img_data[1]
             t_idx = int((1 - strength) * num_steps)
             t = timesteps[t_idx]
             timesteps = timesteps[t_idx:]
-            x = t * x + (1.0 - t) * init_latent.to(x.dtype)
+            
+            with torch.no_grad():
+                x = t * x + (1.0 - t) * init_latent.to(x.dtype)
+            
+            # Clear init_latent
+            del init_latent
+            torch.cuda.empty_cache()
         
+       
+        if self.offload:
+            self.t5 = self.t5.to(self.device)
+            self.clip = self.clip.to(self.device)
+        
+        with torch.no_grad():
+            inp = prepare(t5=self.t5, clip=self.clip, img=x, prompt=opts.prompt)
         
         if self.offload:
-            self.t5, self.clip = self.t5.to(self.device), self.clip.to(self.device)
-        
-        inp = prepare(t5=self.t5, clip=self.clip, img=x, prompt=opts.prompt)
-        
-        if self.offload:
-            self.t5, self.clip = self.t5.cpu(), self.clip.cpu()
+            self.t5 = self.t5.cpu()
+            self.clip = self.clip.cpu()
             torch.cuda.empty_cache()
             self.model = self.model.to(self.device)
         
-        
-        x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance)
-        
-        if self.offload:
-            self.model.cpu()
-            torch.cuda.empty_cache()
-            self.ae.decoder.to(x.device)
+    
+        with torch.no_grad():
+            x = denoise(self.model, **inp, timesteps=timesteps, guidance=opts.guidance)
         
         
-        x = unpack(x.float(), opts.height, opts.width)
-        with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-            x = self.ae.decode(x)
+        del inp
+        torch.cuda.empty_cache()
         
         if self.offload:
-            self.ae.decoder.cpu()
+            self.model = self.model.cpu()
             torch.cuda.empty_cache()
-        x = x.clamp(-1, 1)
-        x = rearrange(x[0], "c h w -> h w c")
-        return Image.fromarray((127.5 * (x + 1.0)).cpu().byte().numpy())
+            self.ae.decoder = self.ae.decoder.to(x.device)
+        
+        with torch.no_grad():
+            x = unpack(x.float(), opts.height, opts.width)
+            
+            
+            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                x = self.ae.decode(x)
+        
+        if self.offload:
+            self.ae.decoder = self.ae.decoder.cpu()
+            torch.cuda.empty_cache()
+        
+        
+        with torch.no_grad():
+            x = x.clamp(-1, 1)
+            x = rearrange(x[0], "c h w -> h w c")
+            
+            
+            x_cpu = x.cpu()
+            del x 
+            torch.cuda.empty_cache()
+            
+            img_array = (127.5 * (x_cpu + 1.0)).byte().numpy()
+            del x_cpu
+            
+            return Image.fromarray(img_array)
