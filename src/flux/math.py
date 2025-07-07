@@ -2,25 +2,28 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
-
-def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: float) -> Tensor:
+def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, weight: float) -> Tensor:
     """
-    Hybrid PAG+NAG attention: 
-    - NAG-style: compute features, combine with weight, normalize
-    - PAG-style: use identity matrix for negative attention (not negative prompt)
+    Hybrid PAG + NAG attention:
+    - Use standard (NAG-style) scaled dot-product to compute x_pos.
+    - For PAG-style negative features, use identity-based attention.
     """
-    
     q, k = apply_rope(q, k, pe)
-    pos_features = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    x_pos = torch.nn.functional .scaled_dot_product_attention(q, k, v)  # positive features
 
-    
     B, H, L, D = q.shape
 
-    combined_features = pos_features + guidance_weight * (pos_features - v)
+   
+    x_neg = v
+
     
-    output = rearrange(combined_features, "B H L D -> B L (H D)")
+    x = x_pos + weight * (x_pos - x_neg)
+    x = torch.nn.functional.normalize(x, dim=-1)
+
     
-    return output
+    x = x.transpose(1, 2).reshape(B, L, H * D)
+    return x
+
 
 def rope(pos: Tensor, dim: int, theta: int) -> Tensor:
     assert dim % 2 == 0
