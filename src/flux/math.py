@@ -24,35 +24,27 @@ def attention(
     z_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
     
     
-    if guidance_weight > 1.0:
-        
-        identity_weights = torch.eye(L, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
-        identity_weights = identity_weights.expand(B, H, -1, -1)
-        z_neg = torch.matmul(identity_weights, v)
-        
-        
-        guidance_scale = guidance_weight - 1.0
-        z_ex = z_pos + guidance_scale * (z_pos - z_neg)
-        
-        
-        norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
-        norm_ex = torch.norm(z_ex, dim=-1, keepdim=True)
-        
-        
-        ratio = norm_ex / (norm_pos + 1e-8)
-        scale_factor = torch.where(
-            ratio > tau,
-            tau / ratio,
-            torch.ones_like(ratio)
-        )
-        z_norm = z_ex * scale_factor
-        
-
-        z_final = alpha * z_norm + (1 - alpha) * z_pos
-    else:
-
-        z_final = z_pos
+    identity_weights = torch.eye(L, device=q.device, dtype=q.dtype).unsqueeze(0).unsqueeze(0)
+    identity_weights = identity_weights.expand(B, H, -1, -1)
+    z_neg = torch.matmul(identity_weights, v)
     
+
+    z_ex = z_pos + guidance_weight * (z_pos - z_neg)
+    
+    
+    norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
+    norm_ex = torch.norm(z_ex, dim=-1, keepdim=True)
+    
+    
+    ratio = norm_ex / (norm_pos + 1e-8)
+    scale_factor = torch.where(
+        ratio > tau,
+        tau / ratio,
+        torch.ones_like(ratio)
+    )
+    z_norm = z_ex * scale_factor
+    
+    z_final = alpha * z_norm + (1 - alpha) * z_pos
 
     out = rearrange(z_final, "b h l d -> b l (h d)")
     return out
