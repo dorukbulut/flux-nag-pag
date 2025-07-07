@@ -8,7 +8,7 @@ from einops import rearrange
 def attention(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     pe: torch.Tensor, guidance_weight: float,
-    tau: float = 1.5, alpha: float = 0.6
+    tau: float = 1.5, alpha: float = 0.5
 ) -> torch.Tensor:
     """
     Hybrid PAG + NAG Attention:
@@ -30,7 +30,9 @@ def attention(
         identity_weights = identity_weights.expand(B, H, -1, -1)
         z_neg = torch.matmul(identity_weights, v)
         
-        z_ex = z_pos + guidance_weight * (z_pos - z_neg)
+        
+        guidance_scale = guidance_weight - 1.0
+        z_ex = z_pos + guidance_scale * (z_pos - z_neg)
         
         
         norm_pos = torch.norm(z_pos, dim=-1, keepdim=True)
