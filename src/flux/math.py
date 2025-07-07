@@ -2,26 +2,35 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
-def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, weight: float) -> Tensor:
-    """
-    Hybrid PAG + NAG attention:
-    - Use standard (NAG-style) scaled dot-product to compute x_pos.
-    - For PAG-style negative features, use identity-based attention.
-    """
+def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, guidance_weight: float, 
+              tau: float = 2.5, alpha: float = 0.25) -> Tensor:
+  
     q, k = apply_rope(q, k, pe)
-    x_pos = torch.nn.functional .scaled_dot_product_attention(q, k, v)  # positive features
-
+    
     B, H, L, D = q.shape
 
+    x_pos = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    x_neg = v  
+    
+    
+    x_extrapolated = x_pos + guidance_weight * (x_pos - x_neg)
+    
+    
+    norm_pos = torch.norm(x_pos, p=1, dim=-1, keepdim=True)
+    norm_extrapolated = torch.norm(x_extrapolated, p=1, dim=-1, keepdim=True)
+    
+    
+    ratio = norm_extrapolated / (norm_pos + 1e-8)
+    clipped_ratio = torch.clamp(ratio, max=tau)
+    rescaling_factor = clipped_ratio / (ratio + 1e-8)
+    
+    
+    x_normalized = rescaling_factor * x_extrapolated
+    
    
-    x_neg = v
-
+    x_refined = alpha * x_normalized + (1 - alpha) * x_pos
+    x = x_refined.transpose(1, 2).reshape(B, L, H * D)
     
-    x = x_pos + weight * (x_pos - x_neg)
-    x = torch.nn.functional.normalize(x, dim=-1)
-
-    
-    x = x.transpose(1, 2).reshape(B, L, H * D)
     return x
 
 
